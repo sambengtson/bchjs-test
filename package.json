@@ -549,6 +549,7 @@
       "resolved": "https://registry.npmjs.org/sntp/-/sntp-1.0.9.tgz",
       "version": "1.0.9"
     },
+    "socket.io": "^2.1.1",
     "sshpk": {
       "dependencies": {
         "assert-plus": {

@@ -1,43 +1,76 @@
 const bch = require('bitcoincashjs');
-var unirest = require('unirest');
+const unirest = require('unirest');
+const io = require('socket.io-client');
+const socket = io('https://bch.sambengtson.com');
 
 //bch.Networks.enableRegtest();
 
 const Address = bch.Address;
 const fromString = Address.fromString;
-const wif = '5d898626a4a17766df4ab77a46d055de4e1fa2f32a91d8cb883ed5d27111a768';
+const wif = '';
 const pk = new bch.PrivateKey(wif);
-const address = pk.toAddress().toString();
+const address = pk.toAddress().toString(Address.CashAddrFormat);
+console.log(address);
 
-const unit = bch.Unit;
-const minerFee = unit.fromMilis(0.01).toSatoshis();
+socket.emit('subscribe', pk.toAddress().toString());
+socket.on('transactions', (tx) => {
+    console.log(tx);
+})
+
+setTimeout(() => {
+    spend()
+}, 2000);
+
+function spend() {
+    const unit = bch.Unit;
+    const minerFee = 360
 
 
-const toAddress = fromString('bitcoincash:qr0q67nsn66cf3klfufttr0vuswh3w5nt5jqpp20t9', 'livenet', 'pubkeyhash', Address.CashAddrFormat);
+    const toAddress = fromString(address, 'livenet', 'pubkeyhash', Address.CashAddrFormat);
 
-unirest.get(`https://rest.bitcoin.com/v1/address/utxo/${address}`)
-    .send()
-    .end(response => {
-        const utxo = {
-            txId: response.body[0].txid,
-            scriptPubKey: response.body[0].scriptPubKey,
-            outputIndex: response.body[0].vout,
-            address: response.body[0].legacyAddress,
-            satoshis: response.body[0].satoshis
-        }
-
-        const sendAmount = response.body[0].satoshis - minerFee;
-        const transaction = new bch.Transaction()
-            .from(utxo)
-            .to(toAddress.toString(), sendAmount)
-            .sign(pk);
-
-        console.log(transaction.toString())
-
-        unirest.post(`https://rest.bitcoin.com/v1/rawtransactions/sendRawTransaction/${transaction.toString()}`)
+    unirest.get(`https://bch.sambengtson.com/v1/address/utxo/${address}`)
         .send()
         .end(response => {
-            console.log(response.code);
-            console.log(response.body);
+
+            let originalAmount = 0;
+            const utxos = findBiggestUtxo(response.body);
+            for (const utxo of utxos) {
+                utxo.outputIndex = utxo.vout;
+                utxo.address = utxo.legacyAddress;
+                utxo.txId = utxo.txid;
+                originalAmount += utxo.satoshis;
+            }
+
+            const sendAmount = originalAmount - minerFee;
+            const transaction = new bch.Transaction()
+                .from(utxos)
+                .to(toAddress.toString(), sendAmount)
+                .sign(pk);
+
+            console.log(transaction.toString())
+
+            unirest.post(`https://bch.sambengtson.com/v1/rawtransactions/sendRawTransaction/${transaction.toString()}`)
+                .send()
+                .end(response => {
+                    console.log(response.code);
+                    console.log(response.body);
+                })
         })
-    })
+}
+
+function findBiggestUtxo(utxos) {
+    let largestAmount = 0;
+    let largestIndex = 0;
+
+    for (var i = 0; i < utxos.length; i++) {
+        const thisUtxo = utxos[i];
+        thisUtxo.value = thisUtxo.amount;
+
+        if (thisUtxo.satoshis > largestAmount) {
+            largestAmount = thisUtxo.satoshis;
+            largestIndex = i;
+        }
+    }
+
+    return [utxos[largestIndex]];
+}
